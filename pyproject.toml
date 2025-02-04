@@ -1,5 +1,5 @@
 [project]
-name = "deliberato"
+name = "quorum"
 version = "0.1.0"
 description = "A transparent proxy for OpenAI's chat completions API endpoint"
 readme = "README.md"
@@ -23,10 +23,10 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --cov=deliberato --cov-report=term-missing"
+addopts = "-v --cov=quorum --cov-report=term-missing"
 
 [tool.coverage.run]
-source = ["deliberato"]
+source = ["quorum"]
 branch = true
 
 [tool.coverage.report]
@@ -41,7 +41,7 @@ exclude_lines = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/deliberato"]
+packages = ["src/quorum"]
 
 [dependency-groups]
 # Local-only and will not be included in the project requirements when

@@ -1,10 +1,10 @@
 .PHONY: run run-prod install test test-cov clean
 
 run:
-	uv run uvicorn src.deliberato.oai_proxy:app --reload
+	uv run uvicorn src.quorum.oai_proxy:app --reload
 
 run-prod:
-	uv run uvicorn src.deliberato.oai_proxy:app --host 0.0.0.0 --port 8000
+	uv run uvicorn src.quorum.oai_proxy:app --host 0.0.0.0 --port 8000
 
 install:
 	uv sync
@@ -13,7 +13,7 @@ test: install
 	uv run pytest
 
 test-cov: install
-	uv run pytest --cov=deliberato --cov-report=html --cov-report=term-missing
+	uv run pytest --cov=quorum --cov-report=html --cov-report=term-missing
 
 clean:
 	rm -rf .pytest_cache

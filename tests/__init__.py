@@ -1,3 +1,3 @@
 """
-Test package for the Deliberato OpenAI proxy.
+Test package for the quorum OpenAI proxy.
 """

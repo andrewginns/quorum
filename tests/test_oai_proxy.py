@@ -94,9 +94,9 @@ def mock_config_blank_model(monkeypatch):
         return json.dumps(MOCK_CONFIG_BLANK_MODEL)
 
     monkeypatch.setattr(Path, "read_text", mock_read_text)
-    import deliberato.oai_proxy
+    import quorum.oai_proxy
 
-    importlib.reload(deliberato.oai_proxy)
+    importlib.reload(quorum.oai_proxy)
     return MOCK_CONFIG_BLANK_MODEL
 
 
@@ -108,16 +108,16 @@ def mock_config_with_model(monkeypatch):
         return json.dumps(MOCK_CONFIG_WITH_MODEL)
 
     monkeypatch.setattr(Path, "read_text", mock_read_text)
-    import deliberato.oai_proxy
+    import quorum.oai_proxy
 
-    importlib.reload(deliberato.oai_proxy)
+    importlib.reload(quorum.oai_proxy)
     return MOCK_CONFIG_WITH_MODEL
 
 
 @pytest.fixture
 def test_client_blank_model(mock_config_blank_model):
     """Create a test client with blank model config"""
-    from deliberato.oai_proxy import app
+    from quorum.oai_proxy import app
 
     return TestClient(app)
 
@@ -125,14 +125,14 @@ def test_client_blank_model(mock_config_blank_model):
 @pytest.fixture
 def test_client_with_model(mock_config_with_model):
     """Create a test client with model set in config"""
-    from deliberato.oai_proxy import app
+    from quorum.oai_proxy import app
 
     return TestClient(app)
 
 
 def test_load_config_blank_model(mock_config_blank_model):
     """Test configuration loading with blank model"""
-    from deliberato.oai_proxy import load_config
+    from quorum.oai_proxy import load_config
 
     config = load_config()
 
@@ -149,7 +149,7 @@ def test_load_config_blank_model(mock_config_blank_model):
 
 def test_load_config_with_model(mock_config_with_model):
     """Test configuration loading with model set"""
-    from deliberato.oai_proxy import load_config
+    from quorum.oai_proxy import load_config
 
     config = load_config()
 
