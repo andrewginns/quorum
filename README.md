@@ -1,160 +1,72 @@
-# OpenAI API Proxy
+# quorum
 
-A transparent proxy for OpenAI's chat completions API endpoint. This proxy captures all incoming requests, forwards them to OpenAI's API, and returns the responses exactly as received.
+A flexible proxy service for routing requests to multiple LLM backends. quorum provides configurable proxy routing and aggregation of responses from multiple LLM providers.
 
 ## Features
 
-- Transparent proxying of `/chat/completions` endpoint
-- Support for both streaming and non-streaming responses
-- Multiple configurable backend endpoints via config.yaml
-- Configurable model overrides per backend
-- Configurable request timeouts
-- Secure authentication forwarding
-- Health check endpoint
-- Proper error handling and logging
+- **Multiple Backend Support**: Route requests to multiple LLM providers in parallel or sequence
+- **Configurable Response Aggregation**: Combine responses from multiple backends with custom aggregation strategies
+- **OpenAI-Compatible API**: Implements the OpenAI Chat Completions API format for compatibility with existing tools
+- **Streaming Support**: Full support for streaming responses from LLM backends
+- **Robust Error Handling**: Gracefully handles backend failures and invalid configurations
+- **Parallel Function Calling**: Support for parallel tool/function calling with aggregated results
 
-## Requirements
+## Configuration
 
-- Python 3.13+
-- `uv` (https://github.com/astral-sh/uv)
+quorum is configured via YAML files that specify:
 
-## Installation
+- Primary backend providers and their endpoints
+- Response aggregation strategies
+- Timeout and retry settings
+- Model mappings and routing rules
+
+Example configuration:
+```yaml
+primary_backends:
+  - name: LLM1
+    url: http://llm1.example.com/v1
+    model: gpt-4-1
+  - name: LLM2 
+    url: http://llm2.example.com/v1
+    model: gpt-4-2
+
+iterations:
+  aggregation:
+    strategy: concatenate
+    separator: "\n-------------\n"
+
+settings:
+  timeout: 30
+```
+
+## Getting Started
 
 1. Clone the repository
 
 2. Create and activate a virtual environment:
    ```bash
-   uv venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   make install
    ```
 
-3. Install dependencies:
-   ```bash
-   uv install
-   ```
+3. Configure your backends in the config file
 
-## Configuration
-
-Configure the proxy by editing `config.yaml`:
-
-```yaml
-# Primary backend configurations for LLM API endpoints
-primary_backends:
-  # First backend configuration
-  - name: LLM1  # Identifier for the first backend
-    url: https://api.openai.com/v1  # API endpoint URL
-    model: ""  # Model to use (if blank, must be specified in request)
-  
-  # Second backend configuration (not currently used)
-  - name: LLM2  # Identifier for the second backend
-    url: ""  # API endpoint URL (not configured)
-    model: ""  # Model to use (not configured)
-
-# Global settings
-settings:
-  timeout: 30  # Request timeout in seconds
-```
-
-Configuration options:
-- `primary_backends`: List of backend configurations
-  - `name`: Identifier for the backend
-  - `url`: Base URL for the API endpoint (default for LLM1: https://api.openai.com/v1)
-  - `model`: If set, overrides the model parameter in all requests to this backend
-- `settings`:
-  - `timeout`: Request timeout in seconds
-
-## Running the Proxy
+4. Run the proxy server
 
 For development with auto-reload:
 ```bash
-uv run dev
+make run
 ```
 
 For production:
 ```bash
-uv run start
+make run-prod
 ```
 
-## Usage
 
-The proxy exposes the following endpoints:
+## Testing
 
-### Chat Completions
-
-```bash
-curl http://localhost:8000/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
-  -d '{
-    "model": "gpt-4",  # Required if not set in backend config
-    "messages": [
-      {
-        "role": "user",
-        "content": "Hello!"
-      }
-    ]
-  }'
-```
-
-### Health Check
+Run the test suite:
 
 ```bash
-curl http://localhost:8000/health
-```
-
-## Error Handling
-
-The proxy includes error handling for:
-- Network errors
-- Invalid requests
-- Timeouts
-- Server errors
-
-Errors are logged and returned to the client with appropriate status codes and error messages.
-
-## Authentication
-
-The proxy uses Bearer token authentication:
-- Your OpenAI API key must be provided in the Authorization header of each request
-- The proxy forwards the Authorization header unchanged to the OpenAI API
-- API keys are never logged or stored by the proxy
-- Never commit API keys to version control
-
-## Security Considerations
-
-Authentication and API Keys:
-- Your OpenAI API key must be provided in the Authorization header of each request
-- The proxy forwards the Authorization header unchanged to the OpenAI API
-- API keys are never logged or stored by the proxy
-- Use secure methods to provide the API key to your applications
-- Never commit API keys to version control
-
-Network Security:
-- All headers (except Host) are forwarded to maintain security context
-- HTTPS is required for production use to protect API key transmission
-- Consider implementing rate limiting for production deployments
-- Use secure methods to provide the API key to your applications
-
-## Development
-
-For development:
-
-```bash
-# Add a new dependency
-uv add package-name
-
-# Add a development dependency
-uv add --dev package-name
-
-# Update dependencies
-uv install
-
-# Run tests
-uv run pytest
-
-# Start development server with auto-reload
-uv run dev
-
-# Start production server
-uv run start
+make test
 ```
