@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 import httpx
 import logging
 import json
+import yaml
 from pathlib import Path
 
 # Configure logging
@@ -12,17 +13,17 @@ logger = logging.getLogger(__name__)
 
 def load_config():
     """
-    Load configuration from config.json file.
+    Load configuration from config.yaml file.
     Returns a dictionary containing the configuration.
     """
     try:
-        config_path = Path(__file__).parent.parent.parent / "config.json"
-        config_json = config_path.read_text()
-        config = json.loads(config_json)
-        logger.info("Successfully loaded configuration from config.json")
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        config_yaml = config_path.read_text()
+        config = yaml.safe_load(config_yaml)
+        logger.info("Successfully loaded configuration from config.yaml")
         return config
     except Exception as e:
-        logger.error(f"Error loading config.json: {str(e)}")
+        logger.error(f"Error loading config.yaml: {str(e)}")
         # Return default configuration
         return {
             "primary_backends": [
@@ -48,7 +49,7 @@ OPENAI_API_BASE = target_backend["url"]
 DEFAULT_MODEL = target_backend.get("model", "")
 
 if not OPENAI_API_BASE:
-    logger.warning("Backend URL not set in config.json, using default value")
+    logger.warning("Backend URL not set in config.yaml, using default value")
     OPENAI_API_BASE = "https://api.openai.com/v1"
 
 # Get timeout from configuration
@@ -79,19 +80,19 @@ async def proxy_chat_completions(request: Request) -> Response:
         json_body = json.loads(body)
         is_streaming = json_body.get("stream", False)
 
-        # Set model based on config.json if not provided in request
-        # Only use the model from request if config.json model is blank
+        # Set model based on config.yaml if not provided in request
+        # Only use the model from request if config.yaml model is blank
         if "model" not in json_body:
-            if DEFAULT_MODEL:  # If config.json has a non-blank model
+            if DEFAULT_MODEL:  # If config.yaml has a non-blank model
                 json_body["model"] = DEFAULT_MODEL
                 body = json.dumps(json_body).encode()
             else:
-                logger.warning("No model specified in request or config.json")
+                logger.warning("No model specified in request or config.yaml")
                 return Response(
                     content=json.dumps(
                         {
                             "error": {
-                                "message": "Model must be specified in request when config.json model is blank",
+                                "message": "Model must be specified in request when config.yaml model is blank",
                                 "type": "invalid_request_error",
                             }
                         }
@@ -105,7 +106,7 @@ async def proxy_chat_completions(request: Request) -> Response:
             json_body["model"] = DEFAULT_MODEL
             body = json.dumps(json_body).encode()
 
-        # Construct target URL using the first backend from config.json
+        # Construct target URL using the first backend from config.yaml
         target_url = f"{OPENAI_API_BASE}/chat/completions"
         logger.info(
             f"Forwarding request to: {target_url} with model: {json_body['model']}"

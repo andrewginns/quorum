@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 import json
+import yaml
 import httpx
 import importlib
 from pathlib import Path
@@ -91,7 +92,7 @@ def mock_config_blank_model(monkeypatch):
     """Mock config file with blank model"""
 
     def mock_read_text(*args, **kwargs):
-        return json.dumps(MOCK_CONFIG_BLANK_MODEL)
+        return yaml.dump(MOCK_CONFIG_BLANK_MODEL)
 
     monkeypatch.setattr(Path, "read_text", mock_read_text)
     import quorum.oai_proxy
@@ -105,7 +106,7 @@ def mock_config_with_model(monkeypatch):
     """Mock config file with model set"""
 
     def mock_read_text(*args, **kwargs):
-        return json.dumps(MOCK_CONFIG_WITH_MODEL)
+        return yaml.dump(MOCK_CONFIG_WITH_MODEL)
 
     monkeypatch.setattr(Path, "read_text", mock_read_text)
     import quorum.oai_proxy
@@ -193,7 +194,7 @@ async def test_chat_completion_no_model_error(test_client_blank_model):
     error | should.have.keys("message", "type")
     error["type"] | should.equal("invalid_request_error")
     error["message"] | should.equal(
-        "Model must be specified in request when config.json model is blank"
+        "Model must be specified in request when config.yaml model is blank"
     )
 
 

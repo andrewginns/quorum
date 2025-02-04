@@ -6,7 +6,7 @@ A transparent proxy for OpenAI's chat completions API endpoint. This proxy captu
 
 - Transparent proxying of `/chat/completions` endpoint
 - Support for both streaming and non-streaming responses
-- Multiple configurable backend endpoints via config.json
+- Multiple configurable backend endpoints via config.yaml
 - Configurable model overrides per backend
 - Configurable request timeouts
 - Secure authentication forwarding
@@ -35,26 +35,24 @@ A transparent proxy for OpenAI's chat completions API endpoint. This proxy captu
 
 ## Configuration
 
-Configure the proxy by editing `config.json`:
+Configure the proxy by editing `config.yaml`:
 
-```json
-{
-  "primary_backends": [
-    { 
-      "name": "LLM1",
-      "url": "https://api.openai.com/v1",  # Primary OpenAI API endpoint
-      "model": ""  # Optional: Set to override model in all requests
-    },
-    { 
-      "name": "LLM2",  # Additional backend configuration
-      "url": "",  # Alternative API endpoint
-      "model": ""  # Optional model override
-    }
-  ],
-  "settings": {
-    "timeout": 30  # Request timeout in seconds
-  }
-}
+```yaml
+# Primary backend configurations for LLM API endpoints
+primary_backends:
+  # First backend configuration
+  - name: LLM1  # Identifier for the first backend
+    url: https://api.openai.com/v1  # API endpoint URL
+    model: ""  # Model to use (if blank, must be specified in request)
+  
+  # Second backend configuration (not currently used)
+  - name: LLM2  # Identifier for the second backend
+    url: ""  # API endpoint URL (not configured)
+    model: ""  # Model to use (not configured)
+
+# Global settings
+settings:
+  timeout: 30  # Request timeout in seconds
 ```
 
 Configuration options:
