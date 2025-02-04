@@ -7,7 +7,7 @@ run-prod:
 	uv run uvicorn src.quorum.oai_proxy:app --host 0.0.0.0 --port 8000
 
 install:
-	uv sync
+	uv sync --all-extras --dev
 
 test: install
 	uv run pytest

@@ -1,0 +1,34 @@
+name: Branch Push - Run tests when a branch is pushed
+
+# Trigger on a push to any branch
+on:
+  push:
+
+jobs:
+  uv-example:
+    name: python
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          # Pin uv
+          version: "0.5.5"
+          # Enable caching of uv.lock
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          # pin python using the project's .python-version file
+          python-version-file: ".python-version"
+
+      - name: Install the project
+        run: uv sync --all-extras --dev
+
+      - name: Run tests
+        run: uv run pytest
