@@ -2,13 +2,24 @@
 primary_backends:
   # First backend configuration
   - name: LLM1  # Identifier for the first backend
-    url: https://api.openai.com/v1  # API endpoint URL
-    model: ""  # Model to use (if blank, must be specified in request)
+    url: http://localhost:11434/v1  # API endpoint URL
+    model: "deepseek-r1:1.5b"  # Model to use
   
-  # Second backend configuration (not currently used)
+  # Second backend configuration
   - name: LLM2  # Identifier for the second backend
-    url: ""  # API endpoint URL (not configured)
-    model: ""  # Model to use (not configured)
+    url: http://localhost:11434/v1  # API endpoint URL
+    model: "deepseek-r1:1.5b"  # Model to use
+
+  # Third backend configuration
+  - name: LLM3  # Identifier for the second backend
+    url: http://localhost:11434/v1  # API endpoint URL
+    model: "deepseek-r1:1.5b"  # Model to use
+
+iterations:
+    aggregation:
+      strategy: concatenate
+      separator: "-------------"
+
 
 # Global settings
 settings:
