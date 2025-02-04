@@ -4,10 +4,13 @@ version = "0.1.0"
 description = "A transparent proxy for OpenAI's chat completions API endpoint"
 readme = "README.md"
 requires-python = ">=3.13"
+authors = [
+    {name = "Andrew Ginns", email = "ginns.aw@gmail.com"},
+]
 dependencies = [
     "fastapi>=0.115.8",
+    "grappa>=1.0.1",
     "httpx>=0.28.1",
-    "python-dotenv>=1.0.1",
     "uvicorn>=0.34.0",
 ]
 
@@ -15,5 +18,36 @@ dependencies = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cov=deliberato --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["deliberato"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+    "raise ImportError",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/deliberato"]
+
+[dependency-groups]
+# Local-only and will not be included in the project requirements when
+# published to PyPI or other indexes
+dev = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.25.3",
+    "pytest-cov>=6.0.0",
+]

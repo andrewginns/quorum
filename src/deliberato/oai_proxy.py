@@ -1,26 +1,58 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 import httpx
-import os
 import logging
 import json
-from dotenv import load_dotenv
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment variables from .env file
-load_dotenv()
+
+def load_config():
+    """
+    Load configuration from config.json file.
+    Returns a dictionary containing the configuration.
+    """
+    try:
+        config_path = Path(__file__).parent.parent.parent / "config.json"
+        config_json = config_path.read_text()
+        config = json.loads(config_json)
+        logger.info("Successfully loaded configuration from config.json")
+        return config
+    except Exception as e:
+        logger.error(f"Error loading config.json: {str(e)}")
+        # Return default configuration
+        return {
+            "primary_backends": [
+                {
+                    "name": "default",
+                    "url": "https://api.openai.com/v1",
+                    "model": "",
+                }
+            ],
+            "settings": {"timeout": 60},
+        }
+
+
+# Load configuration
+config = load_config()
 
 # Initialize FastAPI app
 app = FastAPI(title="OpenAI API Proxy")
 
-# Get OpenAI API base URL from environment variable, default to official API
-OPENAI_API_BASE = os.getenv("OPENAI_API_BASE")
+# Get the target URL and model from the first backend in the configuration
+target_backend = config["primary_backends"][0]
+OPENAI_API_BASE = target_backend["url"]
+DEFAULT_MODEL = target_backend.get("model", "")
+
 if not OPENAI_API_BASE:
-    logger.warning("OPENAI_API_BASE not set in .env file, using default value")
+    logger.warning("Backend URL not set in config.json, using default value")
     OPENAI_API_BASE = "https://api.openai.com/v1"
+
+# Get timeout from configuration
+TIMEOUT = config["settings"].get("timeout", 60)
 
 # Create async HTTP client
 http_client = httpx.AsyncClient()
@@ -43,12 +75,41 @@ async def proxy_chat_completions(request: Request) -> Response:
         # Get the raw request body
         body = await request.body()
 
-        # Parse JSON to check for streaming
+        # Parse JSON to check for streaming and set default model if not provided
         json_body = json.loads(body)
         is_streaming = json_body.get("stream", False)
 
-        # Construct target URL
+        # Set model based on config.json if not provided in request
+        # Only use the model from request if config.json model is blank
+        if "model" not in json_body:
+            if DEFAULT_MODEL:  # If config.json has a non-blank model
+                json_body["model"] = DEFAULT_MODEL
+                body = json.dumps(json_body).encode()
+            else:
+                logger.warning("No model specified in request or config.json")
+                return Response(
+                    content=json.dumps(
+                        {
+                            "error": {
+                                "message": "Model must be specified in request when config.json model is blank",
+                                "type": "invalid_request_error",
+                            }
+                        }
+                    ),
+                    status_code=400,
+                    media_type="application/json",
+                )
+        elif (
+            DEFAULT_MODEL and DEFAULT_MODEL != ""
+        ):  # Override request model if config model is set
+            json_body["model"] = DEFAULT_MODEL
+            body = json.dumps(json_body).encode()
+
+        # Construct target URL using the first backend from config.json
         target_url = f"{OPENAI_API_BASE}/chat/completions"
+        logger.info(
+            f"Forwarding request to: {target_url} with model: {json_body['model']}"
+        )
 
         # Forward all headers except host
         # This includes the Authorization header containing the OpenAI API key
@@ -74,7 +135,7 @@ async def proxy_chat_completions(request: Request) -> Response:
         # Make the request to OpenAI
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                target_url, content=body, headers=headers, timeout=60.0
+                target_url, content=body, headers=headers, timeout=float(TIMEOUT)
             )
 
             if is_streaming:

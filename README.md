@@ -6,14 +6,16 @@ A transparent proxy for OpenAI's chat completions API endpoint. This proxy captu
 
 - Transparent proxying of `/chat/completions` endpoint
 - Support for both streaming and non-streaming responses
-- Configurable target API endpoint via environment variables
+- Multiple configurable backend endpoints via config.json
+- Configurable model overrides per backend
+- Configurable request timeouts
 - Secure authentication forwarding
 - Health check endpoint
 - Proper error handling and logging
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.13+
 - `uv` (https://github.com/astral-sh/uv)
 
 ## Installation
@@ -33,22 +35,35 @@ A transparent proxy for OpenAI's chat completions API endpoint. This proxy captu
 
 ## Configuration
 
-1. Create your environment file by copying the example:
-   ```bash
-   cp .env.example .env
-   ```
+Configure the proxy by editing `config.json`:
 
-2. Edit the `.env` file to configure your settings:
-   ```bash
-   # Using your preferred editor
-   nano .env  # or vim .env, etc.
-   ```
+```json
+{
+  "primary_backends": [
+    { 
+      "name": "LLM1",
+      "url": "https://api.openai.com/v1",  # Primary OpenAI API endpoint
+      "model": ""  # Optional: Set to override model in all requests
+    },
+    { 
+      "name": "LLM2",  # Additional backend configuration
+      "url": "",  # Alternative API endpoint
+      "model": ""  # Optional model override
+    }
+  ],
+  "settings": {
+    "timeout": 30  # Request timeout in seconds
+  }
+}
+```
 
-The proxy can be configured using the following environment variables:
-
-- `OPENAI_API_BASE`: Base URL for the OpenAI API (default: https://api.openai.com/v1)
-
-Note: The `.env` file is ignored by git to prevent committing sensitive information. Always use `.env.example` as a template for required environment variables.
+Configuration options:
+- `primary_backends`: List of backend configurations
+  - `name`: Identifier for the backend
+  - `url`: Base URL for the API endpoint (default for LLM1: https://api.openai.com/v1)
+  - `model`: If set, overrides the model parameter in all requests to this backend
+- `settings`:
+  - `timeout`: Request timeout in seconds
 
 ## Running the Proxy
 
@@ -73,7 +88,7 @@ curl http://localhost:8000/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -d '{
-    "model": "gpt-4",
+    "model": "gpt-4",  # Required if not set in backend config
     "messages": [
       {
         "role": "user",
@@ -102,33 +117,10 @@ Errors are logged and returned to the client with appropriate status codes and e
 ## Authentication
 
 The proxy uses Bearer token authentication:
-
-1. Every request to the `/chat/completions` endpoint must include an Authorization header with your OpenAI API key
-2. Format: `Authorization: Bearer your-openai-api-key`
-3. The API key is forwarded directly to the OpenAI API (not stored or validated)
-4. Requests without an Authorization header will receive a 401 Unauthorized response
-5. The proxy does not store, modify, or validate the API key
-
-Example with authentication:
-```bash
-# Using environment variable
-curl http://localhost:8000/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
-  -d '{
-    "model": "gpt-4",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-
-# Using direct API key (not recommended for production)
-curl http://localhost:8000/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-..." \
-  -d '{
-    "model": "gpt-4",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
+- Your OpenAI API key must be provided in the Authorization header of each request
+- The proxy forwards the Authorization header unchanged to the OpenAI API
+- API keys are never logged or stored by the proxy
+- Never commit API keys to version control
 
 ## Security Considerations
 
@@ -136,7 +128,7 @@ Authentication and API Keys:
 - Your OpenAI API key must be provided in the Authorization header of each request
 - The proxy forwards the Authorization header unchanged to the OpenAI API
 - API keys are never logged or stored by the proxy
-- Use environment variables to manage API keys securely
+- Use secure methods to provide the API key to your applications
 - Never commit API keys to version control
 
 Network Security:

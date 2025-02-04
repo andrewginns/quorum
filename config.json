@@ -1,0 +1,17 @@
+{
+  "primary_backends": [
+    { 
+      "name": "LLM1", 
+      "url": "https://api.openai.com/v1",
+      "model": ""
+    },
+    { 
+      "name": "LLM2", 
+      "url": "",
+      "model": ""
+    }
+  ],
+  "settings": {
+    "timeout": 30
+  }
+} 

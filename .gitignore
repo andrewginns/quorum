@@ -11,3 +11,5 @@ wheels/
 
 # .env file
 .env
+.coverage
+.git_local_repo_credentials
