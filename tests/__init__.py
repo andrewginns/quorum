@@ -1,3 +1,3 @@
 """
-Test package for the quorum OpenAI proxy.
+Test package for quorum OpenAI proxy.
 """
