@@ -1,7 +1,7 @@
 .PHONY: run run-prod install test test-cov clean
 
 run:
-	uv run uvicorn src.quorum.oai_proxy:app --reload
+	uv run uvicorn src.quorum.oai_proxy:app --host 0.0.0.0 --port 8001 --reload --reload-include "*.yaml"
 
 run-prod:
 	uv run uvicorn src.quorum.oai_proxy:app --host 0.0.0.0 --port 8000

@@ -9,7 +9,6 @@ A flexible proxy service for routing requests to multiple LLM backends. quorum p
 - **OpenAI-Compatible API**: Implements the OpenAI Chat Completions API format for compatibility with existing tools
 - **Streaming Support**: Full support for streaming responses from LLM backends
 - **Robust Error Handling**: Gracefully handles backend failures and invalid configurations
-- **Parallel Function Calling**: Support for parallel tool/function calling with aggregated results
 
 ## Configuration
 
@@ -52,7 +51,7 @@ settings:
 
 4. Run the proxy server
 
-For development with auto-reload:
+For development with auto-reload on http://localhost:8006:
 ```bash
 make run
 ```
