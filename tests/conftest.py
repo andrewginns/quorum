@@ -228,6 +228,21 @@ class MockStreamingResponse:
         for chunk in self._chunks:
             yield f"data: {json.dumps(chunk)}\n\n".encode()
         yield b"data: [DONE]\n\n"
+        
+    def __aiter__(self):
+        self._iter_index = 0
+        return self
+        
+    async def __anext__(self):
+        if self._iter_index < len(self._chunks):
+            chunk = self._chunks[self._iter_index]
+            self._iter_index += 1
+            return f"data: {json.dumps(chunk)}\n\n".encode()
+        elif self._iter_index == len(self._chunks):
+            self._iter_index += 1
+            return b"data: [DONE]\n\n"
+        else:
+            raise StopAsyncIteration()
 
     def json(self):
         """Return the first chunk as a dict for non-streaming access"""

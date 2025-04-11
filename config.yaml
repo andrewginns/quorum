@@ -21,7 +21,7 @@ primary_backends:
 
 iterations:
     aggregation:
-      strategy: concatenate
+      strategy: aggregate
 
 strategy:
   # --- Concatenate Strategy ---
