@@ -24,13 +24,67 @@ iterations:
       strategy: concatenate
 
 strategy:
+  # --- Concatenate Strategy ---
+  # Simple strategy to join all backend responses together sequentially.
   concatenate:
-    # Only shows if skip_final_aggregation is false
+    # String used to separate responses when skip_final_aggregation is false.
     separator: "\n\nSEPARATOR\n\n"
-    # Hide intermediate thinking
+    # If true, hides thinking blocks from intermediate responses.
     hide_intermediate_think: false
-    # Hide final thinking
-    hide_final_think: true
-    # Tags to identify thinking
+    # If true, hides thinking blocks from the final combined response.
+    hide_final_think: false
+    # XML-like tags identifying blocks containing thought processes.
     thinking_tags: ["think", "reason", "reasoning", "thought", "Thought"]
+    # If true, outputs are streamed/returned individually without using the separator.
+    # If false, outputs are joined by the separator into one block.
     skip_final_aggregation: true
+
+  # --- Aggregate Strategy ---
+  # Strategy to send all initial responses to a final LLM for synthesis.
+  aggregate:
+    # Specifies which backends to use as input sources for aggregation
+    # Options:
+    # - "all": Use all primary_backends (default if omitted)
+    # - List of specific backend names to include
+    source_backends: ["LLM1", "LLM2", "LLM3"]
+    # Alternative examples:
+    # source_backends: "all"  # Use all backends
+    # source_backends: ["LLM1", "LLM3"]  # Only use specific backends
+    
+    # The backend that will synthesize all source outputs
+    # Must be defined in primary_backends
+    aggregator_backend: "LLM1"
+    
+    # How to combine source outputs in the aggregator prompt
+    intermediate_separator: "\n\n---\n\n"
+    
+    # Whether to include source backend names with their responses
+    include_source_names: true
+    
+    # Format for labeling each source response when include_source_names is true
+    source_label_format: "Response from {backend_name}:\n"
+    
+    # The prompt template sent to the aggregator backend
+    prompt_template: |
+      You have received the following responses regarding the user's query:
+      
+      {{intermediate_results}}
+      
+      Synthesize these responses into a single, comprehensive answer that captures
+      the best information and insights from all sources. Resolve any contradictions
+      and provide a coherent, unified response.
+    
+    # If true, removes thinking blocks from source responses before aggregation
+    strip_intermediate_thinking: true
+    
+    # Controls visibility of the aggregator's thinking process in final output
+    hide_aggregator_thinking: true
+    
+    # Tags identifying thinking blocks for both source and aggregator responses
+    thinking_tags: ["think", "reason", "reasoning", "thought", "Thought"]
+    
+    # Whether to include the original user query in the aggregator prompt
+    include_original_query: true
+    
+    # Format for including the original query when include_original_query is true
+    query_format: "Original query: {query}\n\n"
