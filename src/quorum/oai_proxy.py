@@ -6,13 +6,33 @@ import json
 import yaml
 import asyncio
 import re
-import time
+import os
 from pathlib import Path
-from typing import Dict, Any, AsyncGenerator, List, Optional
+from typing import Dict, Any, AsyncGenerator, List
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+aggregation_logger = logging.getLogger("aggregation")
+aggregation_logger.setLevel(logging.INFO)
+
+log_dir = Path(__file__).parent.parent.parent / "logs"
+os.makedirs(log_dir, exist_ok=True)
+
+aggregation_log_file = log_dir / "aggregation.log"
+file_handler = logging.FileHandler(str(aggregation_log_file), mode='a')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+aggregation_logger.addHandler(file_handler)
+aggregation_logger.propagate = True
+
+try:
+    with open(str(aggregation_log_file), 'a') as f:
+        f.write("Test direct write to log file\n")
+    logger.info(f"Successfully wrote to log file at {aggregation_log_file}")
+except Exception as e:
+    logger.error(f"Failed to write to log file: {str(e)}")
 
 
 def load_config():
@@ -61,6 +81,37 @@ TIMEOUT = config["settings"].get("timeout", 60)
 
 # Create async HTTP client
 http_client = httpx.AsyncClient()
+
+
+class StreamingResponseWrapper:
+    """
+    Wrapper for httpx Response objects that implements the async iterator protocol
+    allowing them to be used with `async for` loops.
+    """
+    def __init__(self, response):
+        self.response = response
+        self.aiter_bytes_iter = None
+        
+    async def aiter_bytes(self):
+        """Original method from httpx Response that yields bytes"""
+        async for chunk in self.response.aiter_bytes():
+            yield chunk
+            
+    def __aiter__(self):
+        """Make this object an async iterator"""
+        self.aiter_bytes_iter = self.response.aiter_bytes()
+        return self
+        
+    async def __anext__(self):
+        """Get the next item from the iterator"""
+        if self.aiter_bytes_iter is None:
+            raise StopAsyncIteration
+            
+        try:
+            chunk = await self.aiter_bytes_iter.__anext__()
+            return chunk
+        except StopAsyncIteration:
+            raise StopAsyncIteration
 
 
 def strip_thinking_tags(
@@ -139,12 +190,12 @@ async def call_backend(
 
             if response.status_code == 200:
                 if json_body.get("stream", False):
-                    # For streaming responses
+                    wrapped_response = StreamingResponseWrapper(response)
                     return {
                         "backend_name": backend["name"],
                         "status_code": response.status_code,
                         "headers": dict(response.headers),
-                        "content": response,
+                        "content": wrapped_response,
                         "is_stream": True,
                     }
                 else:
@@ -171,7 +222,7 @@ async def call_backend(
                             "headers": dict(response.headers),
                             "content": content
                             if isinstance(content, str)
-                            else str(content) if isinstance(content, memoryview) else content.decode() if hasattr(content, 'decode') else str(content),
+                            else content.decode(),
                             "is_stream": False,
                         }
             else:
@@ -203,81 +254,6 @@ async def call_backend(
             "content": {"error": {"message": str(e), "type": "proxy_error"}},
             "is_stream": False,
         }
-
-
-async def call_aggregator_backend(
-    aggregator_backend: Dict[str, str],
-    source_responses: List[Dict],
-    original_request: Dict,
-    original_query: str,
-    config: Dict,
-    headers: Dict[str, str],
-    timeout: float,
-) -> Dict:
-    """
-    Call the aggregator backend with the processed responses from source backends.
-
-    Args:
-        aggregator_backend: The backend configuration for the aggregator
-        source_responses: List of processed responses from source backends
-        original_request: The original request body from the user
-        original_query: The original query from the user
-        config: The strategy configuration
-        headers: Request headers
-        timeout: Request timeout
-    """
-    logger.info("Calling aggregator backend: %s", aggregator_backend.get("name"))
-    
-    include_source_names = config.get("include_source_names", True)
-    source_label_format = config.get("source_label_format", "Response from {backend_name}:\n")
-    prompt_template = config.get("prompt_template", "You have received the following responses regarding the user's query:\n\n{responses}\n\nProvide a concise synthesis of these responses.")
-    intermediate_separator = config.get("intermediate_separator", "\n\n---\n\n")
-    thinking_tags = config.get("thinking_tags", ["think", "reason", "reasoning", "thought"])
-    strip_intermediate_thinking = config.get("strip_intermediate_thinking", True)
-    include_original_query = config.get("include_original_query", True)
-    
-    formatted_responses = []
-    for response in source_responses:
-        if not response or "content" not in response:
-            continue
-            
-        content = response["content"]["choices"][0]["message"]["content"]
-        
-        if strip_intermediate_thinking:
-            content = strip_thinking_tags(content, thinking_tags, hide_intermediate=True)
-            
-        if include_source_names and "backend_name" in response:
-            content = source_label_format.format(backend_name=response["backend_name"]) + content
-            
-        formatted_responses.append(content)
-    
-    responses_text = intermediate_separator.join(formatted_responses)
-    prompt = prompt_template.format(responses=responses_text)
-    
-    if include_original_query and original_query:
-        query_format = config.get("original_query_format", "Original query: {query}\n\n")
-        prompt = query_format.format(query=original_query) + prompt
-    
-    aggregator_request = original_request.copy()
-    
-    if "messages" in aggregator_request:
-        system_message = next((m for m in aggregator_request["messages"] if m.get("role") == "system"), None)
-        
-        new_messages = []
-        if system_message:
-            new_messages.append(system_message)
-            
-        new_messages.append({"role": "user", "content": prompt})
-        aggregator_request["messages"] = new_messages
-    
-    if "model" in aggregator_backend:
-        aggregator_request["model"] = aggregator_backend["model"]
-    
-    try:
-        return await call_backend(aggregator_backend, json.dumps(aggregator_request).encode(), headers, timeout)
-    except Exception as e:
-        logger.error("Error calling aggregator backend: %s", str(e))
-        return {"status_code": 500, "content": {"error": {"message": f"Aggregator backend error: {str(e)}"}}}
 
 
 class ThinkingTagFilter:
@@ -400,10 +376,9 @@ async def progress_streaming_aggregator(
     separator: str = "\n-------------\n",
     hide_intermediate_think: bool = True,
     hide_final_think: bool = False,
-    thinking_tags: Optional[List[str]] = None,
+    thinking_tags: List[str] = None,
     skip_final_aggregation: bool = False,
-    strategy: str = "concatenate",
-    strategy_config: Optional[Dict[str, Any]] = None,
+    suppress_individual_responses: bool = False,
 ) -> AsyncGenerator[bytes, None]:
     """
     Aggregates streaming responses from multiple backends with progress updates.
@@ -418,357 +393,256 @@ async def progress_streaming_aggregator(
         hide_final_think: Whether to remove <think>... in the final aggregated content
         thinking_tags: Which tags to treat as 'thinking' tags
         skip_final_aggregation: If True, skip sending the final combined SSE chunk
-        strategy: The aggregation strategy to use (concatenate or aggregate)
-        strategy_config: Configuration for the aggregation strategy
+        suppress_individual_responses: If True, suppress streaming individual LLM responses
+                                      and only stream the final aggregated response
     """
     if thinking_tags is None:
         thinking_tags = ["think", "reason", "reasoning", "thought"]
 
-    logger.info("Starting progress_streaming_aggregator with strategy: %s", strategy)
+    logger.info("Starting progress_streaming_aggregator")
+    aggregation_logger.info("Starting streaming aggregation process")
     
-    if strategy == "aggregate" and strategy_config:
-        source_backend_names = strategy_config.get("source_backends", [])
-        if not source_backend_names or source_backend_names == ["all"]:
-            source_backends = valid_backends
-        else:
-            source_backends = [b for b in valid_backends if b.get("name") in source_backend_names]
-        
-        aggregator_backend_name = strategy_config.get("aggregator_backend")
-        aggregator_backend = next((b for b in valid_backends if b.get("name") == aggregator_backend_name), None)
-        
-        if not aggregator_backend:
-            logger.error("Aggregator backend not found: %s", aggregator_backend_name)
-            error_event = {
-                "id": f"chatcmpl-parallel-error-{int(time.time())}",
-                "object": "chat.completion.chunk",
-                "created": int(time.time()),
-                "model": "parallel-proxy",
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {
-                            "content": f"Error: Aggregator backend not found: {aggregator_backend_name}"
-                        },
-                        "finish_reason": "stop",
-                    }
-                ],
-            }
-            yield f"data: {json.dumps(error_event)}\n\n".encode()
-            yield b"data: [DONE]\n\n"
-            return
-    else:
-        source_backends = valid_backends
-        aggregator_backend = None
+    try:
+        request_data = json.loads(body)
+        aggregation_logger.info(f"Request data: {json.dumps(request_data, indent=2)}")
+    except Exception as e:
+        aggregation_logger.error(f"Error parsing request body: {str(e)}")
 
     # Send an initial SSE role event
     initial_event = {
-        "id": f"chatcmpl-parallel-init-{int(time.time())}",
+        "id": "chatcmpl-parallel",
         "object": "chat.completion.chunk",
-        "created": int(time.time()),
+        "created": int(asyncio.get_event_loop().time()),
         "model": "parallel-proxy",
         "choices": [
             {"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}
         ],
     }
     initial_data = f"data: {json.dumps(initial_event)}\n\n".encode()
-    logger.info("Yielding initial role event: %s", initial_data.decode())
+    logger.info("Yielding initial event: %s", initial_data.decode())
     yield initial_data
 
-    request_body = json.loads(body)
-    request_body["stream"] = True
+    tag_filters = {
+        i: ThinkingTagFilter(thinking_tags) for i in range(len(valid_backends))
+    }
 
-    tag_filters = {}
-    for i, backend in enumerate(source_backends):
-        backend_name = backend.get("name", str(i))
-        tag_filters[backend_name] = ThinkingTagFilter(thinking_tags)
+    tasks = [
+        asyncio.create_task(call_backend(backend, body, headers, timeout))
+        for backend in valid_backends
+    ]
+    streaming_started = set()
+    all_content = ["" for _ in valid_backends]
 
-    source_tasks = []
-    for backend in source_backends:
-        backend_json = json.dumps(request_body).encode()
-        task = asyncio.create_task(
-            call_backend(backend, backend_json, headers, timeout)
-        )
-        source_tasks.append((backend, task))
-
-    backend_responses = {}
-    backend_contents = {}
-    backend_finished = set()
-    first_backend_name = source_backends[0].get("name") if source_backends else None
-    error_messages = []
-    original_query = ""
-
-    if strategy == "aggregate" and "messages" in request_body:
-        user_messages = [m for m in request_body["messages"] if m.get("role") == "user"]
-        if user_messages:
-            original_query = user_messages[-1].get("content", "")
-
-    all_content = {}  # For backward compatibility
-    
-    for i, (backend, task) in enumerate(source_tasks):
-        backend_name = backend.get("name", str(i))
-        backend_finished.add(backend_name)
-        
-        try:
-            response = await task
-            backend_responses[backend_name] = response
-
-            if not response.get("is_stream", False) or response.get("status_code") != 200:
-                msg = "Backend failed" if response.get("status_code") != 200 else "Non-streaming response"
-                error_messages.append(f"{backend_name}: {msg}")
-                continue
-
-            content_gen = response.get("content", None)
-            if not content_gen:
-                error_messages.append(f"{backend_name}: No content")
-                continue
-
-            accumulated_content = ""
-            
-            async for chunk in content_gen:
+    while len(streaming_started) < len(tasks):
+        for i, task in enumerate(tasks):
+            if task.done() and i not in streaming_started:
+                streaming_started.add(i)
                 try:
-                    chunk_decoded = chunk.decode()
-                except UnicodeDecodeError as e:
-                    logger.error(
-                        "Unicode decoding error for backend %s: %s; error: %s",
-                        backend_name,
-                        chunk,
-                        str(e),
+                    response = await task
+                    logger.info(
+                        "Processing task %d with status_code %s",
+                        i,
+                        response.get("status_code"),
                     )
-                    continue
-
-                logger.info(
-                    "Received chunk from backend %s: %s",
-                    backend_name,
-                    chunk_decoded.strip(),
-                )
-                
-                events = chunk_decoded.strip().split("\n\n")
-                for event in events:
-                    if not event.strip():
-                        continue
-                    if event.startswith("data: "):
-                        event_data = event[6:].strip()
-                        if event_data == "[DONE]":
-                            logger.info("Received [DONE] marker from backend %s", backend_name)
-                            continue
+                    if response.get("status_code") == 200 and response.get(
+                        "is_stream", False
+                    ):
+                        content = ""
+                        content_gen = response["content"]
                         
-                        try:
-                            parsed = json.loads(event_data)
-                            if "choices" in parsed and parsed["choices"]:
-                                delta = parsed["choices"][0].get("delta", {})
-                                if "content" in delta:
-                                    content = delta["content"]
-                                    if hide_intermediate_think:
-                                        safe_text = tag_filters[backend_name].feed(content)
-                                    else:
-                                        safe_text = content
-                                    
-                                    accumulated_content += safe_text
-                                    
-                                    if strategy != "aggregate" or not aggregator_backend:
-                                        if safe_text:
-                                            stream_event = {
-                                                "id": f"chatcmpl-{backend_name}-{int(time.time())}",
-                                                "object": "chat.completion.chunk",
-                                                "created": int(time.time()),
-                                                "model": "parallel-proxy",
-                                                "choices": [
-                                                    {
-                                                        "index": 0,
-                                                        "delta": {"content": safe_text},
-                                                        "finish_reason": None,
-                                                    }
-                                                ],
-                                            }
-                                            event_payload = f"data: {json.dumps(stream_event)}\n\n".encode()
-                                            logger.info(
-                                                "Yielding streaming event for backend %s: %s",
-                                                backend_name,
-                                                event_payload.decode(),
-                                            )
-                                            yield event_payload
-                        except json.JSONDecodeError as e:
-                            logger.warning(
-                                "JSON decoding failed for event: %s; error: %s",
-                                event_data,
-                                e,
+                        if not content_gen:
+                            logger.error(
+                                "Error processing backend %d: content_gen is None", i
                             )
                             continue
-            
-            flushed = tag_filters[backend_name].flush()
-            accumulated_content += flushed
-            backend_contents[backend_name] = accumulated_content
-            all_content[i] = accumulated_content  # For backward compatibility
-            
-        except Exception as e:
-            logger.error("Error processing backend %s: %s", backend_name, str(e))
-            error_messages.append(f"{backend_name}: {str(e)}")
-
-    if strategy == "aggregate" and aggregator_backend and backend_contents:
-        try:
-            formatted_responses = []
-            config = strategy_config or {}
-            include_source_names = config.get("include_source_names", True)
-            source_label_format = config.get("source_label_format", "Response from {backend_name}:\n")
-            intermediate_separator = config.get("intermediate_separator", "\n\n---\n\n")
-            strip_intermediate_thinking = config.get("strip_intermediate_thinking", True)
-            
-            for backend_name, content in backend_contents.items():
-                if strip_intermediate_thinking:
-                    content = strip_thinking_tags(content, thinking_tags, hide_intermediate=True)
-                
-                if include_source_names:
-                    content = source_label_format.format(backend_name=backend_name) + content
-                
-                formatted_responses.append(content)
-            
-            responses_text = intermediate_separator.join(formatted_responses)
-            prompt_template = config.get("prompt_template", 
-                "You have received the following responses regarding the user's query:\n\n{responses}\n\nProvide a concise synthesis of these responses.")
-            prompt = prompt_template.format(responses=responses_text)
-            
-            include_original_query = config.get("include_original_query", True)
-            if include_original_query and original_query:
-                query_format = config.get("original_query_format", "Original query: {query}\n\n")
-                prompt = query_format.format(query=original_query) + prompt
-            
-            aggregator_request = request_body.copy()
-            
-            system_message = next((m for m in aggregator_request.get("messages", []) if m.get("role") == "system"), None)
-            
-            new_messages = []
-            if system_message:
-                new_messages.append(system_message)
-                
-            new_messages.append({"role": "user", "content": prompt})
-            aggregator_request["messages"] = new_messages
-            
-            if "model" in aggregator_backend:
-                aggregator_request["model"] = aggregator_backend["model"]
-            
-            logger.info("Calling aggregator backend: %s", aggregator_backend.get("name"))
-            aggregator_response = await call_backend(
-                aggregator_backend, 
-                json.dumps(aggregator_request).encode(), 
-                headers, 
-                timeout
-            )
-            
-            if aggregator_response.get("status_code") == 200 and aggregator_response.get("is_stream", False):
-                config = strategy_config or {}
-                hide_aggregator_thinking = config.get("hide_aggregator_thinking", True)
-                aggregator_tag_filter = ThinkingTagFilter(thinking_tags)
-                
-                async for chunk in aggregator_response["content"]:
-                    try:
-                        chunk_decoded = chunk.decode()
-                    except UnicodeDecodeError as e:
-                        logger.error("Unicode decoding error for aggregator: %s", str(e))
-                        continue
-                    
-                    events = chunk_decoded.strip().split("\n\n")
-                    for event in events:
-                        if not event.strip():
-                            continue
-                        if event.startswith("data: "):
-                            event_data = event[6:].strip()
-                            if event_data == "[DONE]":
-                                logger.info("Received [DONE] marker from aggregator")
-                                continue
                             
-                            try:
-                                parsed = json.loads(event_data)
-                                if "choices" in parsed and parsed["choices"]:
-                                    delta = parsed["choices"][0].get("delta", {})
-                                    if "content" in delta:
-                                        content = delta["content"]
-                                        if hide_aggregator_thinking:
-                                            safe_text = aggregator_tag_filter.feed(content)
-                                        else:
-                                            safe_text = content
-                                        
-                                        if safe_text:
-                                            stream_event = {
-                                                "id": f"chatcmpl-aggregator-{int(time.time())}",
-                                                "object": "chat.completion.chunk",
-                                                "created": int(time.time()),
-                                                "model": "parallel-proxy",
-                                                "choices": [
-                                                    {
-                                                        "index": 0,
-                                                        "delta": {"content": safe_text},
-                                                        "finish_reason": None,
+                        try:
+                            async for chunk in content_gen:
+                                try:
+                                    chunk_decoded = chunk.decode()
+                                except UnicodeDecodeError as e:
+                                    logger.error(
+                                        "Unicode decoding error for backend %d: %s; error: %s",
+                                        i,
+                                        chunk,
+                                        str(e),
+                                    )
+                                    continue
+                                
+                                logger.info(
+                                    "Received chunk from backend %d: %s",
+                                    i,
+                                    chunk_decoded.strip(),
+                                )
+                                events = chunk_decoded.strip().split("\n\n")
+                                for event in events:
+                                    if not event.strip():
+                                        continue
+                                    if event.startswith("data: "):
+                                        event_data = event[6:].strip()
+                                        if event_data == "[DONE]":
+                                            logger.info(
+                                                "Received [DONE] marker from backend %d", i
+                                            )
+                                            continue
+                                        try:
+                                            parsed = json.loads(event_data)
+                                            if "choices" in parsed and parsed["choices"]:
+                                                delta = parsed["choices"][0].get(
+                                                    "delta", {}
+                                                )
+                                                if "content" in delta:
+                                                    c = delta["content"]
+                                                    if hide_intermediate_think:
+                                                        safe_text = tag_filters[i].feed(c)
+                                                    else:
+                                                        safe_text = c
+                                                    content += safe_text
+                                                    if safe_text and not suppress_individual_responses:
+                                                        stream_event = {
+                                                            "id": f"chatcmpl-parallel-{i}",
+                                                            "object": "chat.completion.chunk",
+                                                            "created": int(
+                                                                asyncio.get_event_loop().time()
+                                                            ),
+                                                            "model": "parallel-proxy",
+                                                            "choices": [
+                                                                {
+                                                                    "index": 0,
+                                                                    "delta": {
+                                                                        "content": safe_text
+                                                                    },
+                                                                    "finish_reason": None,
+                                                                }
+                                                            ],
+                                                        }
+                                                        event_payload = f"data: {json.dumps(stream_event)}\n\n".encode()
+                                                        logger.info(
+                                                            "Yielding streaming event for backend %d: %s",
+                                                            i,
+                                                            event_payload.decode(),
+                                                        )
+                                                        yield event_payload
+                                        except json.JSONDecodeError as e:
+                                            logger.warning(
+                                                "JSON decoding failed for event: %s; error: %s",
+                                                event_data,
+                                                e,
+                                            )
+                                            continue
+                        except AttributeError as e:
+                            logger.error(
+                                "Error processing backend %d: %s - The response object doesn't support async iteration. Make sure it's properly wrapped.",
+                                i,
+                                str(e)
+                            )
+                            continue
+                        except Exception as e:
+                            logger.error(
+                                "Unexpected error iterating over content from backend %d: %s",
+                                i,
+                                str(e)
+                            )
+                            continue
+
+                            logger.info(
+                                "Received chunk from backend %d: %s",
+                                i,
+                                chunk_decoded.strip(),
+                            )
+                            events = chunk_decoded.strip().split("\n\n")
+                            for event in events:
+                                if not event.strip():
+                                    continue
+                                if event.startswith("data: "):
+                                    event_data = event[6:].strip()
+                                    if event_data == "[DONE]":
+                                        logger.info(
+                                            "Received [DONE] marker from backend %d", i
+                                        )
+                                        continue
+                                    try:
+                                        parsed = json.loads(event_data)
+                                        if "choices" in parsed and parsed["choices"]:
+                                            delta = parsed["choices"][0].get(
+                                                "delta", {}
+                                            )
+                                            if "content" in delta:
+                                                c = delta["content"]
+                                                if hide_intermediate_think:
+                                                    safe_text = tag_filters[i].feed(c)
+                                                else:
+                                                    safe_text = c
+                                                content += safe_text
+                                                if safe_text:
+                                                    stream_event = {
+                                                        "id": f"chatcmpl-parallel-{i}",
+                                                        "object": "chat.completion.chunk",
+                                                        "created": int(
+                                                            asyncio.get_event_loop().time()
+                                                        ),
+                                                        "model": "parallel-proxy",
+                                                        "choices": [
+                                                            {
+                                                                "index": 0,
+                                                                "delta": {
+                                                                    "content": safe_text
+                                                                },
+                                                                "finish_reason": None,
+                                                            }
+                                                        ],
                                                     }
-                                                ],
-                                            }
-                                            event_payload = f"data: {json.dumps(stream_event)}\n\n".encode()
-                                            yield event_payload
-                            except json.JSONDecodeError as e:
-                                logger.warning("JSON decoding failed for aggregator event: %s", str(e))
-                                continue
-                
-                flushed = aggregator_tag_filter.flush()
-                if flushed and hide_aggregator_thinking:
-                    stream_event = {
-                        "id": f"chatcmpl-aggregator-final-{int(time.time())}",
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": "parallel-proxy",
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {"content": flushed},
-                                "finish_reason": "stop",
-                            }
-                        ],
-                    }
-                    event_payload = f"data: {json.dumps(stream_event)}\n\n".encode()
-                    yield event_payload
-            else:
-                error_msg = "Aggregator backend failed or returned non-streaming response"
-                logger.error(error_msg)
-                error_event = {
-                    "id": f"chatcmpl-error-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": "parallel-proxy",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": f"Error: {error_msg}"},
-                            "finish_reason": "stop",
-                        }
-                    ],
-                }
-                yield f"data: {json.dumps(error_event)}\n\n".encode()
-        except Exception as e:
-            logger.error("Error in aggregate strategy: %s", str(e))
-            error_event = {
-                "id": f"chatcmpl-error-{int(time.time())}",
-                "object": "chat.completion.chunk",
-                "created": int(time.time()),
-                "model": "parallel-proxy",
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {"content": f"Error in aggregate strategy: {str(e)}"},
-                        "finish_reason": "stop",
-                    }
-                ],
-            }
-            yield f"data: {json.dumps(error_event)}\n\n".encode()
-    elif strategy == "concatenate" and not skip_final_aggregation and backend_contents:
+                                                    event_payload = f"data: {json.dumps(stream_event)}\n\n".encode()
+                                                    logger.info(
+                                                        "Yielding streaming event for backend %d: %s",
+                                                        i,
+                                                        event_payload.decode(),
+                                                    )
+                                                    yield event_payload
+                                    except json.JSONDecodeError as e:
+                                        logger.warning(
+                                            "JSON decoding failed for event: %s; error: %s",
+                                            event_data,
+                                            e,
+                                        )
+                                        continue
+                        flushed = tag_filters[i].flush()
+                        content += flushed
+                        all_content[i] = content
+                    else:
+                        logger.info("Backend %d did not return streamable content.", i)
+                except Exception as e:
+                    logger.error("Error processing backend %d: %s", i, e)
+                    aggregation_logger.error(f"Error processing backend {i}: {str(e)}")
+        await asyncio.sleep(0.1)
+    
+    aggregation_logger.info("Content collected from backends (may be empty if backends failed):")
+    for i, content in enumerate(all_content):
+        if content:
+            aggregation_logger.info(f"Backend {i} content: {content}")
+        else:
+            aggregation_logger.info(f"Backend {i} content: No content received")
+
+    # Final SSE event if skip_final_aggregation is False
+    if not skip_final_aggregation:
         filtered_contents = [
-            strip_thinking_tags(content, thinking_tags, hide_intermediate=hide_final_think)
-            for content in backend_contents.values()
-            if content
+            strip_thinking_tags(text, thinking_tags, hide_intermediate=hide_final_think)
+            for text in all_content
+            if text
         ]
         if filtered_contents:
-            combined_text = separator.join(filtered_contents)
+            aggregation_logger.info("Individual LLM responses for streaming aggregation:")
+            for i, content in enumerate(filtered_contents):
+                aggregation_logger.info(f"LLM {i+1} streaming response: {content}")
+            
+            combined_text = f"\n{separator}".join(filtered_contents)
+            
+            aggregation_logger.info(f"Final aggregated streaming content: {combined_text}")
+            
             final_event = {
-                "id": f"chatcmpl-parallel-final-{int(time.time())}",
+                "id": "chatcmpl-parallel-final",
                 "object": "chat.completion.chunk",
-                "created": int(time.time()),
+                "created": int(asyncio.get_event_loop().time()),
                 "model": "parallel-proxy",
                 "choices": [
                     {
@@ -781,25 +655,25 @@ async def progress_streaming_aggregator(
             final_data = f"data: {json.dumps(final_event)}\n\n".encode()
             logger.info("Yielding final aggregated event: %s", final_data.decode())
             yield final_data
-    elif not backend_contents:
-        error_event = {
-            "id": f"chatcmpl-error-{int(time.time())}",
-            "object": "chat.completion.chunk",
-            "created": int(time.time()),
-            "model": "parallel-proxy",
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {
-                        "content": "Error: All backends failed to provide content"
-                    },
-                    "finish_reason": "error",
-                }
-            ],
-        }
-        error_data = f"data: {json.dumps(error_event)}\n\n".encode()
-        logger.info("Yielding error event: %s", error_data.decode())
-        yield error_data
+        else:
+            error_event = {
+                "id": "error",
+                "object": "chat.completion.chunk",
+                "created": int(asyncio.get_event_loop().time()),
+                "model": "parallel-proxy",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "content": "Error: All backends failed to provide content"
+                        },
+                        "finish_reason": "error",
+                    }
+                ],
+            }
+            error_data = f"data: {json.dumps(error_event)}\n\n".encode()
+            logger.info("Yielding error event: %s", error_data.decode())
+            yield error_data
 
     done_data = b"data: [DONE]\n\n"
     logger.info("Yielding [DONE] marker.")
@@ -968,6 +842,11 @@ async def proxy_chat_completions(request: Request) -> Response:
                 skip_final_aggregation = aggregator_config.get(
                     "skip_final_aggregation", False
                 )
+                suppress_individual_responses = aggregator_config.get(
+                    "suppress_individual_responses", False
+                )
+                if "suppress_individual_responses" in json_body:
+                    suppress_individual_responses = json_body.get("suppress_individual_responses")
 
                 return StreamingResponse(
                     progress_streaming_aggregator(
@@ -980,6 +859,7 @@ async def proxy_chat_completions(request: Request) -> Response:
                         hide_final_think,
                         thinking_tags,
                         skip_final_aggregation,
+                        suppress_individual_responses,
                     ),
                     media_type="text/event-stream",
                 )
@@ -1023,47 +903,10 @@ async def proxy_chat_completions(request: Request) -> Response:
 
         # Non-streaming path
         try:
-            aggregator_strategy = (
-                config.get("iterations", {})
-                .get("aggregation", {})
-                .get("strategy", "concatenate")
-            )
-            aggregator_config = config.get("strategy", {}).get(
-                aggregator_strategy, {}
-            )
-            
-            if is_parallel and aggregator_strategy == "aggregate":
-                aggregator_backend_name = aggregator_config.get("aggregator_backend")
-                aggregator_backend = next((b for b in valid_backends if b.get("name") == aggregator_backend_name), None)
-                
-                if not aggregator_backend:
-                    error_msg = f"Aggregator backend not found: {aggregator_backend_name}"
-                    logger.error(error_msg)
-                    return Response(
-                        content=json.dumps(
-                            {
-                                "error": {
-                                    "message": error_msg,
-                                    "type": "configuration_error",
-                                }
-                            }
-                        ),
-                        status_code=500,
-                        media_type="application/json",
-                    )
-                
-                source_backend_names = aggregator_config.get("source_backends", [])
-                if source_backend_names and source_backend_names != ["all"]:
-                    backends_to_call = [b for b in valid_backends if b.get("name") in source_backend_names]
-                else:
-                    backends_to_call = valid_backends
-            else:
-                backends_to_call = valid_backends
-            
             responses = await asyncio.gather(
                 *[
                     call_backend(backend, body, headers, float(TIMEOUT))
-                    for backend in backends_to_call
+                    for backend in valid_backends
                 ]
             )
             successful_responses = [r for r in responses if r["status_code"] == 200]
@@ -1112,146 +955,63 @@ async def proxy_chat_completions(request: Request) -> Response:
                     "thinking_tags", ["think", "reason", "reasoning", "thought"]
                 )
 
+                # Combine responses
                 try:
-                    if aggregator_strategy == "aggregate":
-                        source_backend_names = aggregator_config.get("source_backends", [])
-                        if not source_backend_names or source_backend_names == ["all"]:
-                            source_backends = valid_backends
-                        else:
-                            source_backends = [b for b in valid_backends if b.get("name") in source_backend_names]
-                        
-                        aggregator_backend_name = aggregator_config.get("aggregator_backend")
-                        aggregator_backend = next((b for b in valid_backends if b.get("name") == aggregator_backend_name), None)
-                        
-                        if not aggregator_backend:
-                            error_msg = f"Aggregator backend not found: {aggregator_backend_name}"
-                            logger.error(error_msg)
-                            return Response(
-                                content=json.dumps(
-                                    {
-                                        "error": {
-                                            "message": error_msg,
-                                            "type": "configuration_error",
-                                        }
-                                    }
-                                ),
-                                status_code=500,
-                                media_type="application/json",
-                            )
-                        
-                        for i, response in enumerate(successful_responses):
-                            if i < len(valid_backends):
-                                response["backend_name"] = valid_backends[i].get("name", f"Backend{i+1}")
-                        
-                        request_body = json.loads(body)
-                        original_query = ""
-                        if "messages" in request_body:
-                            user_messages = [m for m in request_body["messages"] if m.get("role") == "user"]
-                            if user_messages:
-                                original_query = user_messages[-1].get("content", "")
-                        
-                        aggregator_response = await call_aggregator_backend(
-                            aggregator_backend,
-                            successful_responses,
-                            request_body,
-                            original_query,
-                            aggregator_config,
-                            headers,
-                            float(TIMEOUT)
+                    processed_contents = []
+                    for r in successful_responses:
+                        content = r["content"]["choices"][0]["message"]["content"]
+                        processed_content = strip_thinking_tags(
+                            content, thinking_tags, hide_intermediate=hide_final_think
                         )
-                        
-                        if aggregator_response["status_code"] != 200:
-                            logger.error("Aggregator backend failed: %s", aggregator_response.get("content"))
-                            return Response(
-                                content=json.dumps(
-                                    {
-                                        "error": {
-                                            "message": f"Aggregator backend failed: {str(aggregator_response.get('content'))}",
-                                            "type": "proxy_error",
-                                        }
-                                    }
-                                ),
-                                status_code=500,
-                                media_type="application/json",
-                            )
-                            
-                        hide_aggregator_thinking = aggregator_config.get("hide_aggregator_thinking", True)
-                        aggregator_content = aggregator_response["content"]["choices"][0]["message"]["content"]
-                        
-                        if hide_aggregator_thinking:
-                            aggregator_content = strip_thinking_tags(
-                                aggregator_content, thinking_tags, hide_intermediate=True
-                            )
-                            
-                        combined_response = {
-                            "id": aggregator_response["content"]["id"],
-                            "object": "chat.completion",
-                            "created": aggregator_response["content"]["created"],
-                            "model": aggregator_response["content"]["model"],
-                            "system_fingerprint": aggregator_response["content"].get(
-                                "system_fingerprint", ""
-                            ),
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "message": {
-                                        "role": "assistant",
-                                        "content": aggregator_content,
-                                    },
-                                    "logprobs": None,
-                                    "finish_reason": "stop",
-                                }
-                            ],
-                            "usage": aggregator_response["content"]["usage"],
-                        }
-                    else:
-                        processed_contents = []
-                        for r in successful_responses:
-                            content = r["content"]["choices"][0]["message"]["content"]
-                            processed_content = strip_thinking_tags(
-                                content, thinking_tags, hide_intermediate=hide_final_think
-                            )
-                            processed_contents.append(processed_content)
+                        processed_contents.append(processed_content)
 
-                        combined_content = separator.join(processed_contents)
+                    aggregation_logger.info("Individual LLM responses for aggregation:")
+                    for i, content in enumerate(processed_contents):
+                        aggregation_logger.info(f"LLM {i+1} response: {content}")
+                    
+                    combined_content = separator.join(processed_contents)
+                    
+                    aggregation_logger.info(f"Final aggregated content: {combined_content}")
+                    
+                    logger.info("Logged aggregation data to aggregation.log")
 
-                        # Sum up usage
-                        combined_usage = {
-                            "prompt_tokens": sum(
-                                r["content"]["usage"]["prompt_tokens"]
-                                for r in successful_responses
-                            ),
-                            "completion_tokens": sum(
-                                r["content"]["usage"]["completion_tokens"]
-                                for r in successful_responses
-                            ),
-                            "total_tokens": sum(
-                                r["content"]["usage"]["total_tokens"]
-                                for r in successful_responses
-                            ),
-                        }
+                    # Sum up usage
+                    combined_usage = {
+                        "prompt_tokens": sum(
+                            r["content"]["usage"]["prompt_tokens"]
+                            for r in successful_responses
+                        ),
+                        "completion_tokens": sum(
+                            r["content"]["usage"]["completion_tokens"]
+                            for r in successful_responses
+                        ),
+                        "total_tokens": sum(
+                            r["content"]["usage"]["total_tokens"]
+                            for r in successful_responses
+                        ),
+                    }
 
-                        combined_response = {
-                            "id": successful_responses[0]["content"]["id"],
-                            "object": "chat.completion",
-                            "created": successful_responses[0]["content"]["created"],
-                            "model": successful_responses[0]["content"]["model"],
-                            "system_fingerprint": successful_responses[0]["content"].get(
-                                "system_fingerprint", ""
-                            ),
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "message": {
-                                        "role": "assistant",
-                                        "content": combined_content,
-                                    },
-                                    "logprobs": None,
-                                    "finish_reason": "stop",
-                                }
-                            ],
-                            "usage": combined_usage,
-                        }
+                    combined_response = {
+                        "id": successful_responses[0]["content"]["id"],
+                        "object": "chat.completion",
+                        "created": successful_responses[0]["content"]["created"],
+                        "model": successful_responses[0]["content"]["model"],
+                        "system_fingerprint": successful_responses[0]["content"].get(
+                            "system_fingerprint", ""
+                        ),
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {
+                                    "role": "assistant",
+                                    "content": combined_content,
+                                },
+                                "logprobs": None,
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": combined_usage,
+                    }
 
                     return Response(
                         content=json.dumps(combined_response),
