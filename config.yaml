@@ -6,18 +6,18 @@ settings:
 primary_backends:
   # First backend configuration
   - name: LLM1  # Identifier for the first backend
-    url: http://localhost:11434/v1  # API endpoint URL
-    model: "deepseek-r1:1.5b"  # Model to use
+    url: https://api.openai.com/v1  # API endpoint URL
+    model: "gpt-4o-mini"  # Model to use
   
   # Second backend configuration
   - name: LLM2  # Identifier for the second backend
-    url: http://localhost:11434/v1  # API endpoint URL
-    model: "deepseek-r1:1.5b"  # Model to use
+    url: https://api.openai.com/v1  # API endpoint URL
+    model: "gpt-4o-mini"  # Model to use
 
   # Third backend configuration
   - name: LLM3  # Identifier for the third backend
-    url: http://localhost:11434/v1  # API endpoint URL
-    model: "deepseek-r1:1.5b"  # Model to use
+    url: https://api.openai.com/v1  # API endpoint URL
+    model: "gpt-4o-mini"  # Model to use
 
 iterations:
     aggregation:
