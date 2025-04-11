@@ -2,7 +2,6 @@ import pytest
 from fastapi.testclient import TestClient
 import json
 import yaml
-import httpx
 import importlib
 from pathlib import Path
 
@@ -119,10 +118,14 @@ MOCK_CONFIG_PARALLEL_BACKENDS = {
         {"name": "LLM1", "url": "http://test1.example.com/v1", "model": "gpt-4-1"},
         {"name": "LLM2", "url": "http://test2.example.com/v1", "model": "gpt-4-2"},
     ],
-    "iterations": {
-        "aggregation": {
-            "strategy": "concatenate",
-            "separator": "\n-------------\n"
+    "iterations": {"aggregation": {"strategy": "concatenate"}},
+    "strategy": {
+        "concatenate": {
+            "separator": "\n-------------\n",
+            "hide_intermediate_think": True,
+            "hide_final_think": False,
+            "thinking_tags": ["think", "reason", "reasoning", "thought", "Thought"],
+            "skip_final_aggregation": False,
         }
     },
     "settings": {"timeout": 30},
@@ -137,9 +140,50 @@ MOCK_CONFIG_SOME_INVALID_BACKENDS = {
     "settings": {"timeout": 30},
 }
 
+MOCK_COMPLETION_WITH_THINKING = {
+    "id": "chatcmpl-789",
+    "object": "chat.completion",
+    "created": 1677652288,
+    "model": "gpt-4o-mini",
+    "system_fingerprint": "fp_44709d6fcb",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "<think>Let me think about this... 2+2 is a basic arithmetic operation</think>The answer is 4.",
+            },
+            "logprobs": None,
+            "finish_reason": "stop",
+        }
+    ],
+    "usage": {"prompt_tokens": 8, "completion_tokens": 20, "total_tokens": 28},
+}
+
+MOCK_COMPLETION_WITH_MULTIPLE_THINKING = {
+    "id": "chatcmpl-101112",
+    "object": "chat.completion",
+    "created": 1677652288,
+    "model": "gpt-4o-mini",
+    "system_fingerprint": "fp_44709d6fcb",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "<think>First, let me consider this carefully</think>The answer is 4.<reason>This is because 2+2 has always equaled 4 in base-10 arithmetic</reason>",
+            },
+            "logprobs": None,
+            "finish_reason": "stop",
+        }
+    ],
+    "usage": {"prompt_tokens": 8, "completion_tokens": 25, "total_tokens": 33},
+}
+
 
 class MockResponse:
     """Base mock response class with proper async methods"""
+
     def __init__(self, status_code, content=None, headers=None):
         self.status_code = status_code
         self._content = content if content is not None else b""
@@ -148,18 +192,27 @@ class MockResponse:
     async def aread(self):
         if isinstance(self._content, (dict, list)):
             return json.dumps(self._content).encode()
-        return self._content if isinstance(self._content, bytes) else str(self._content).encode()
+        return (
+            self._content
+            if isinstance(self._content, bytes)
+            else str(self._content).encode()
+        )
 
     def json(self):
         """Synchronous json method to match httpx.Response behavior"""
         if isinstance(self._content, (dict, list)):
             return self._content
-        content_str = self._content.decode() if isinstance(self._content, bytes) else self._content
+        content_str = (
+            self._content.decode()
+            if isinstance(self._content, bytes)
+            else self._content
+        )
         return json.loads(content_str)
 
 
 class MockStreamingResponse:
     """Mock response for streaming requests"""
+
     def __init__(self):
         self.status_code = 200
         self.headers = {"content-type": "text/event-stream"}
@@ -167,7 +220,9 @@ class MockStreamingResponse:
 
     async def aread(self):
         # For non-streaming access to the content
-        return b"".join(f"data: {json.dumps(chunk)}\n\n".encode() for chunk in self._chunks)
+        return b"".join(
+            f"data: {json.dumps(chunk)}\n\n".encode() for chunk in self._chunks
+        )
 
     async def aiter_bytes(self):
         for chunk in self._chunks:
@@ -183,10 +238,13 @@ class MockStreamingResponse:
 @pytest.fixture
 def mock_config_blank_model(monkeypatch):
     """Mock config file with blank model"""
+
     def mock_read_text(*args, **kwargs):
         return yaml.dump(MOCK_CONFIG_BLANK_MODEL)
+
     monkeypatch.setattr(Path, "read_text", mock_read_text)
     import quorum.oai_proxy
+
     importlib.reload(quorum.oai_proxy)
     return MOCK_CONFIG_BLANK_MODEL
 
@@ -194,10 +252,13 @@ def mock_config_blank_model(monkeypatch):
 @pytest.fixture
 def mock_config_with_model(monkeypatch):
     """Mock config file with model set"""
+
     def mock_read_text(*args, **kwargs):
         return yaml.dump(MOCK_CONFIG_WITH_MODEL)
+
     monkeypatch.setattr(Path, "read_text", mock_read_text)
     import quorum.oai_proxy
+
     importlib.reload(quorum.oai_proxy)
     return MOCK_CONFIG_WITH_MODEL
 
@@ -205,10 +266,13 @@ def mock_config_with_model(monkeypatch):
 @pytest.fixture
 def mock_config_multiple_backends(monkeypatch):
     """Mock config file with multiple backends"""
+
     def mock_read_text(*args, **kwargs):
         return yaml.dump(MOCK_CONFIG_MULTIPLE_BACKENDS)
+
     monkeypatch.setattr(Path, "read_text", mock_read_text)
     import quorum.oai_proxy
+
     importlib.reload(quorum.oai_proxy)
     return MOCK_CONFIG_MULTIPLE_BACKENDS
 
@@ -216,10 +280,13 @@ def mock_config_multiple_backends(monkeypatch):
 @pytest.fixture
 def mock_config_some_invalid_backends(monkeypatch):
     """Mock config file with some invalid backends"""
+
     def mock_read_text(*args, **kwargs):
         return yaml.dump(MOCK_CONFIG_SOME_INVALID_BACKENDS)
+
     monkeypatch.setattr(Path, "read_text", mock_read_text)
     import quorum.oai_proxy
+
     importlib.reload(quorum.oai_proxy)
     return MOCK_CONFIG_SOME_INVALID_BACKENDS
 
@@ -227,10 +294,13 @@ def mock_config_some_invalid_backends(monkeypatch):
 @pytest.fixture
 def mock_config_parallel_backends(monkeypatch):
     """Mock config file with parallel backends and aggregation settings"""
+
     def mock_read_text(*args, **kwargs):
         return yaml.dump(MOCK_CONFIG_PARALLEL_BACKENDS)
+
     monkeypatch.setattr(Path, "read_text", mock_read_text)
     import quorum.oai_proxy
+
     importlib.reload(quorum.oai_proxy)
     return MOCK_CONFIG_PARALLEL_BACKENDS
 
@@ -239,6 +309,7 @@ def mock_config_parallel_backends(monkeypatch):
 def test_client_blank_model(mock_config_blank_model):
     """Create a test client with blank model config"""
     from quorum.oai_proxy import app
+
     return TestClient(app)
 
 
@@ -246,6 +317,7 @@ def test_client_blank_model(mock_config_blank_model):
 def test_client_with_model(mock_config_with_model):
     """Create a test client with model set in config"""
     from quorum.oai_proxy import app
+
     return TestClient(app)
 
 
@@ -253,6 +325,7 @@ def test_client_with_model(mock_config_with_model):
 def test_client_multiple_backends(mock_config_multiple_backends):
     """Create a test client with multiple backends config"""
     from quorum.oai_proxy import app
+
     return TestClient(app)
 
 
@@ -260,6 +333,7 @@ def test_client_multiple_backends(mock_config_multiple_backends):
 def test_client_some_invalid_backends(mock_config_some_invalid_backends):
     """Create a test client with some invalid backends config"""
     from quorum.oai_proxy import app
+
     return TestClient(app)
 
 
@@ -267,4 +341,5 @@ def test_client_some_invalid_backends(mock_config_some_invalid_backends):
 def test_client_parallel_backends(mock_config_parallel_backends):
     """Create a test client with parallel backends config"""
     from quorum.oai_proxy import app
-    return TestClient(app) 
+
+    return TestClient(app)

@@ -1,3 +1,7 @@
+# Global settings
+settings:
+  timeout: 30  # Request timeout in seconds 
+
 # Primary backend configurations for LLM API endpoints
 primary_backends:
   # First backend configuration
@@ -11,16 +15,22 @@ primary_backends:
     model: "deepseek-r1:1.5b"  # Model to use
 
   # Third backend configuration
-  - name: LLM3  # Identifier for the second backend
+  - name: LLM3  # Identifier for the third backend
     url: http://localhost:11434/v1  # API endpoint URL
     model: "deepseek-r1:1.5b"  # Model to use
 
 iterations:
     aggregation:
       strategy: concatenate
-      separator: "-------------"
 
-
-# Global settings
-settings:
-  timeout: 30  # Request timeout in seconds 
+strategy:
+  concatenate:
+    # Only shows if skip_final_aggregation is false
+    separator: "\n\nSEPARATOR\n\n"
+    # Hide intermediate thinking
+    hide_intermediate_think: false
+    # Hide final thinking
+    hide_final_think: true
+    # Tags to identify thinking
+    thinking_tags: ["think", "reason", "reasoning", "thought", "Thought"]
+    skip_final_aggregation: true
