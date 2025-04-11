@@ -1,4 +1,4 @@
-# Configuration Behavior Analysis
+# Concatenate Strategy Configuration Behavior Analysis
 
 ## Overview
 The configuration settings control how output is displayed from an LLM, particularly focusing on the presentation of thought processes and how multiple outputs are aggregated.

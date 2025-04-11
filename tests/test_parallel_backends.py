@@ -216,6 +216,19 @@ async def test_strip_thinking_tags_streaming(
             self.status_code = 200
             self.headers = {"content-type": "text/event-stream"}
             self._content_type = content_type
+            self._chunks = [
+                # Initial role event
+                {"choices":[{"delta":{"role":"assistant"}}]},
+                {"choices":[{"delta":{"content":f"<{self._content_type}>"}}]},
+                {"choices":[{"delta":{"content":"Let me think about this..."}}]},
+                {"choices":[{"delta":{"content":f"</{self._content_type}>"}}]},
+                {"choices":[{"delta":{"content":"The answer "}}]},
+                {"choices":[{"delta":{"content":"is "}}]},
+                {"choices":[{"delta":{"content":"4"}}]},
+                {"choices":[{"delta":{"content":"."}}]},
+                {"choices":[{"delta":{},"finish_reason":"stop"}]},
+            ]
+            self._iter_index = 0
 
         async def aiter_bytes(self):
             # Initial role event
@@ -233,6 +246,21 @@ async def test_strip_thinking_tags_streaming(
             yield b'data: {"choices":[{"delta":{"content":"."}}]}\n\n'
             yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
             yield b"data: [DONE]\n\n"
+            
+        def __aiter__(self):
+            self._iter_index = 0
+            return self
+            
+        async def __anext__(self):
+            if self._iter_index < len(self._chunks):
+                chunk = self._chunks[self._iter_index]
+                self._iter_index += 1
+                return f"data: {json.dumps(chunk)}\n\n".encode()
+            elif self._iter_index == len(self._chunks):
+                self._iter_index += 1
+                return b"data: [DONE]\n\n"
+            else:
+                raise StopAsyncIteration()
 
     async def mock_post(*args, **kwargs):
         url = str(args[1])

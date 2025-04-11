@@ -6,22 +6,22 @@ settings:
 primary_backends:
   # First backend configuration
   - name: LLM1  # Identifier for the first backend
-    url: http://localhost:11434/v1  # API endpoint URL
-    model: "deepseek-r1:1.5b"  # Model to use
+    url: https://api.openai.com/v1  # API endpoint URL
+    model: "gpt-4o-mini"  # Model to use
   
   # Second backend configuration
   - name: LLM2  # Identifier for the second backend
-    url: http://localhost:11434/v1  # API endpoint URL
-    model: "deepseek-r1:1.5b"  # Model to use
+    url: https://api.openai.com/v1  # API endpoint URL
+    model: "gpt-4o-mini"  # Model to use
 
   # Third backend configuration
   - name: LLM3  # Identifier for the third backend
-    url: http://localhost:11434/v1  # API endpoint URL
-    model: "deepseek-r1:1.5b"  # Model to use
+    url: https://api.openai.com/v1  # API endpoint URL
+    model: "gpt-4o-mini"  # Model to use
 
 iterations:
     aggregation:
-      strategy: concatenate
+      strategy: aggregate
 
 strategy:
   # --- Concatenate Strategy ---
@@ -59,7 +59,7 @@ strategy:
     intermediate_separator: "\n\n---\n\n"
     
     # Whether to include source backend names with their responses
-    include_source_names: true
+    include_source_names: false
     
     # Format for labeling each source response when include_source_names is true
     source_label_format: "Response from {backend_name}:\n"
@@ -88,3 +88,6 @@ strategy:
     
     # Format for including the original query when include_original_query is true
     query_format: "Original query: {query}\n\n"
+
+    # Whether to suppress streaming individual LLM responses and only stream the final aggregated response
+    suppress_individual_responses: true
