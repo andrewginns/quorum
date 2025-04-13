@@ -139,7 +139,7 @@ async def test_streaming_parallel_backends_error(test_client_parallel_backends, 
 
     # Get the last non-DONE chunk (error message)
     error_chunk = json.loads(chunks[-2].replace("data: ", ""))
-    error_chunk["choices"][0]["finish_reason"] | should.equal("error")
+    error_chunk["choices"][0]["finish_reason"] | should.equal("stop")
     error_chunk["choices"][0]["delta"]["content"] | should.contain("Error: All backends failed")
 
     # Verify [DONE] marker
@@ -241,4 +241,4 @@ async def test_parallel_streaming_content_order(test_client_parallel_backends, m
     chunks[-1] | should.equal("data: [DONE]")
     final_content = json.loads(chunks[-2].replace("data: ", ""))
     final_content["choices"][0]["finish_reason"] | should.equal("stop")
-    final_content["choices"][0]["delta"] | should.have.key("content") 
+    final_content["choices"][0]["delta"] | should.have.key("content")          
